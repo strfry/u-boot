@@ -12,6 +12,7 @@
 #include <memalign.h>
 #include <mmc.h>
 #include <dwmmc.h>
+#include <power/regulator.h>
 
 #define PAGE_SIZE 4096
 
@@ -382,6 +383,34 @@ static int dwmci_setup_bus(struct dwmci_host *host, u32 freq)
 	return 0;
 }
 
+#if CONFIG_IS_ENABLED(MMC_IO_VOLTAGE) && CONFIG_IS_ENABLED(DM_REGULATOR)
+static int dwmci_set_io_regulators(struct mmc *mmc)
+{
+	struct dwmci_host *host = (struct dwmci_host *)mmc->priv;
+	int uv = mmc_voltage_to_mv(mmc->signal_voltage) * 1000;
+	int ret = 0;
+
+	if (!mmc->vqmmc_supply)
+		return 0;
+
+	host->signal_voltage = mmc->signal_voltage;
+
+	ret = regulator_set_enable(mmc->vqmmc_supply, false);
+	if (ret && ret != -ENOSYS)
+		return ret;
+
+	ret = regulator_set_value(mmc->vqmmc_supply, uv);
+	if (ret)
+		return ret;
+
+	ret = regulator_set_enable(mmc->vqmmc_supply, true);
+	if (ret && ret != -ENOSYS)
+		return ret;
+
+	return 0;
+}
+#endif
+
 #ifdef CONFIG_DM_MMC
 static int dwmci_set_ios(struct udevice *dev)
 {
@@ -420,6 +449,11 @@ static int dwmci_set_ios(struct mmc *mmc)
 
 	if (host->clksel)
 		host->clksel(host);
+
+#if CONFIG_IS_ENABLED(MMC_IO_VOLTAGE) && CONFIG_IS_ENABLED(DM_REGULATOR)
+	if (host->signal_voltage != mmc->signal_voltage)
+		return dwmci_set_io_regulators(mmc);
+#endif
 
 	return 0;
 }
